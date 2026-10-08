@@ -96,11 +96,10 @@ speaker:
 ## Limitations
 - Minimal metadata support. While the component itself supports it, ESPHome's code currently does not allow media sources to provide the media player with it.
 - No password support.
-- No AirPlay 2; proper multiroom syncing is not supported.
+- No AirPlay 2; proper multiroom syncing is not supported. Your device may allow you to AirPlay to multiple at once, but performance is not guaranteed.
 
 ## Details
 
-- Stop disconnects the sender's session and releases decoder, sockets and PSRAM.
 - Pause/resume in Home Assistant suppresses/resumes local output. With `remote_control: true`, those commands also request sender pause/play through DACP. Support depends on valid `DACP-ID`/`Active-Remote` headers and a matching `_dacp._tcp` service on the sender's session address.
 - Optional `dacp_available` turns on when valid remote-control credentials and a matching sender endpoint have been discovered. It turns off when remote control is disabled, discovery or a command fails, or the session ends. Discovery does not guarantee the sender supports every command.
 - One receiver per device; only UDP ALAC at 44.1 kHz / 16-bit stereo / 352 samples per packet is accepted.
@@ -111,6 +110,7 @@ speaker:
 - Optional `title`, `artist`, and `album` text sensors expose sender-provided track metadata, using the same field names as Sendspin. They preserve UTF-8 text, retain the track while paused, report `Unknown` for missing fields and `Inactive` after disconnect. Metadata publishes only when changed, from the main loop. Configuring any of these sensors advertises text metadata support (`md=0`); no DACP connection is required. Sender apps may omit metadata. These are separate HA sensors, not media-player title attributes; artwork and progress are not advertised.
 ## Technical Details
 
+- Stop disconnects the sender's session and releases decoder, sockets and PSRAM.
 - Incoming AirPlay RECORD requests select `airplay://current` through the native orchestrator. ESPHome handles stopping the previous source and routing PCM; there is no custom source-switching or mixing code. Other source inputs remain available on the same entity. A single configured pipeline also accepts announcement requests through ESPHome's normal fallback.
 - Sender volume requests update the native player's volume. AirPlay’s `-144 dB` mute requests use the native mute callback and preserve the previous volume; a later nonzero sender volume request unmutes. The existing slider mapping for non-mute volume remains unchanged. Home Assistant volume and mute use the native speaker, with no second software gain stage.
 - Session connection messages are logged at INFO. Five-second audio progress summaries and first-packet/output messages use DEBUG; RTSP session methods and metadata field-presence summaries use DEBUG.
