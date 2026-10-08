@@ -22,7 +22,3 @@ build/
 
 # macOS
 .DS_Store
-
-# Build artifacts
-components/raop_media_player/raop_core/*.o
-components/raop_media_player/raop_core/*.d

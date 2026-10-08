@@ -1,0 +1,65 @@
+# Validate with: esphome config tests/sensor_config.yaml
+esphome:
+  name: airplay-sensor-check
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+psram:
+  mode: quad
+network:
+  enable_ipv6: true
+wifi:
+  ssid: "test-network"
+  password: "test-password"
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [airplay]
+i2s_audio:
+  - id: audio_bus
+    i2s_lrclk_pin: GPIO4
+    i2s_bclk_pin: GPIO5
+speaker:
+  - platform: i2s_audio
+    id: audio_output
+    i2s_audio_id: audio_bus
+    dac_type: external
+    i2s_dout_pin: GPIO6
+    sample_rate: 44100
+    bits_per_sample: 16bit
+    channel: stereo
+media_source:
+  - platform: airplay
+    id: airplay_source
+    name: "Test AirPlay"
+    active:
+      name: "AirPlay Active"
+    client:
+      name: "AirPlay Client"
+    title:
+      name: "AirPlay Title"
+    artist:
+      name: "AirPlay Artist"
+    album:
+      name: "AirPlay Album"
+    concealed_packets:
+      name: "AirPlay Concealed Packets"
+    late_frames:
+      name: "AirPlay Late Frames"
+    decode_errors:
+      name: "AirPlay Decode Errors"
+    output_drops:
+      name: "AirPlay Output Drops"
+    dacp_available:
+      name: "AirPlay DACP Available"
+media_player:
+  - platform: speaker_source
+    name: "Test Speaker"
+    media_pipeline:
+      speaker: audio_output
+      format: FLAC
+      sample_rate: 44100
+      num_channels: 2
+      sources: [airplay_source]
