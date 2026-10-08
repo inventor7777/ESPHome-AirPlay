@@ -93,7 +93,7 @@ speaker:
 - `session_timeout` accepts 5 s–5 min, default 15 s. A session is disconnected after this long without UDP traffic after the first audio frame has decoded. Live RTSP selections can stay idle before setup; native TCP keepalive detects vanished senders. Timing/control packets count as UDP activity. It is an inactivity timeout, not a maximum playback duration.
 - `output_latency` (0–500 ms, default 20 ms) adds to that prefeed window. Larger values feed audio earlier; they do not increase the RTP buffer. Scheduling is in milliseconds and has no sample-level drift correction.
 
-# Limitations
+## Limitations
 - Minimal metadata support. While the component itself supports it, ESPHome's code currently does not allow media sources to provide the media player with it.
 - No password support.
 - No AirPlay 2; proper multiroom syncing is not supported.
