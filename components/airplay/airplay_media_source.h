@@ -6,6 +6,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/speaker/speaker.h"
 
 namespace esphome::airplay {
 
@@ -17,6 +18,7 @@ class AirplayMediaSource final : public Component, public media_source::MediaSou
   void on_shutdown() override;
   float get_setup_priority() const override { return setup_priority::LATE; }
   void set_name(const std::string &name) { this->name_ = name; }
+  void set_speaker(speaker::Speaker *speaker) { this->speaker_ = speaker; }
   void set_buffer_frames(size_t frames) { this->buffer_frames_ = frames; }
   void set_prefeed_duration(uint32_t ms) { this->prefeed_duration_ms_ = ms; }
   void set_output_latency(uint32_t ms) { this->output_latency_ms_ = ms; }
@@ -49,6 +51,7 @@ class AirplayMediaSource final : public Component, public media_source::MediaSou
   void client_connected(const sockaddr_storage &client);
   void client_disconnected() { this->client_connected_.store(false); }
   void stream_started();
+  void stream_flushed();
   void stream_ended();
   void sender_volume(float volume, bool muted);
   void stream_paused() { this->sender_paused_.store(true); }
@@ -57,6 +60,10 @@ class AirplayMediaSource final : public Component, public media_source::MediaSou
 
  private:
   RaopServer server_;
+  speaker::Speaker *speaker_{nullptr};
+  Mutex output_mutex_;
+  std::atomic<bool> flush_requested_{false};
+  std::atomic<bool> output_flushing_{false};
   binary_sensor::BinarySensor *active_sensor_{nullptr};
   text_sensor::TextSensor *client_sensor_{nullptr};
   binary_sensor::BinarySensor *dacp_available_sensor_{nullptr};
@@ -80,7 +87,6 @@ class AirplayMediaSource final : public Component, public media_source::MediaSou
   uint32_t last_start_attempt_{0};
   uint32_t last_volume_update_{0};
   uint32_t last_diagnostic_update_{0};
-  bool pending_start_{false};
   bool client_was_active_{false};
   uint32_t client_generation_{0};
   uint32_t seen_generation_{0};

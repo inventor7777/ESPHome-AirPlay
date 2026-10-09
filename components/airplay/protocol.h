@@ -29,6 +29,12 @@ inline void write_be32(uint8_t *p, uint32_t value) {
 inline int16_t sequence_delta(uint16_t a, uint16_t b) { return int16_t(uint16_t(a - b)); }
 inline int32_t time_delta(uint32_t a, uint32_t b) { return int32_t(a - b); }
 
+// RTP timestamps count samples; retain the sample at the FLUSH boundary.
+inline size_t flush_samples(uint32_t timestamp, size_t samples, uint32_t boundary) {
+  int32_t delta = time_delta(boundary, timestamp);
+  return delta > 0 ? std::min(size_t(delta), samples) : 0;
+}
+
 inline bool udp_session_expired(bool audio_started, bool paused, uint32_t now, uint32_t last_packet,
                                 uint32_t timeout) {
   return audio_started && !paused && now - last_packet > timeout;
@@ -85,9 +91,11 @@ inline bool parse_volume(const std::string &text, float &volume, bool &muted) {
   return true;
 }
 
-// Classic RAOP uses fixed RTP headers (no CSRC, extensions, or padding).
+// The first RAOP sync packet uses 0x90; audio still uses a fixed RTP header.
 inline bool valid_raop_packet(const uint8_t *packet, size_t size, size_t socket_index) {
-  if (size < 2 || size >= 2048 || packet[0] != 0x80) return false;
+  if (size < 2 || size >= 2048) return false;
+  if (packet[0] == 0x90) return socket_index == 1 && (packet[1] & 0x7f) == 0x54 && size == 20;
+  if (packet[0] != 0x80) return false;
   switch (packet[1] & 0x7f) {
     case 0x53: return socket_index == 2 && size == 32;  // Timing reply.
     case 0x54: return socket_index == 1 && size == 20;  // Clock synchronization.
@@ -98,14 +106,14 @@ inline bool valid_raop_packet(const uint8_t *packet, size_t size, size_t socket_
   }
 }
 
-inline bool parse_parameter(const std::string &text, const char *key, uint16_t &value) {
+template<typename T> inline bool parse_parameter(const std::string &text, const char *key, T &value) {
   const std::string prefix = std::string(key) + "=";
   size_t pos = 0;
   while ((pos = text.find(prefix, pos)) != std::string::npos) {
     if (pos == 0 || text[pos - 1] == ';' || text[pos - 1] == ' ' || text[pos - 1] == '\t') {
       const char *start = text.data() + pos + prefix.size();
       const char *limit = text.data() + text.size();
-      uint16_t parsed;
+      T parsed;
       auto result = std::from_chars(start, limit, parsed);
       if (result.ec != std::errc{} ||
           (result.ptr != limit && *result.ptr != ';' && *result.ptr != ' ' && *result.ptr != '\t'))

@@ -12,6 +12,21 @@ static std::string dmap(const char *tag, const std::string &value) {
 }
 
 int main() {
+  // FLUSH retains its timestamp sample, including a packet spanning the boundary and RTP wraparound.
+  uint32_t timestamp = 0;
+  assert(parse_parameter("rtptime=4294967295;seq=65535", "rtptime", timestamp) && timestamp == UINT32_MAX);
+  assert(parse_parameter("rtptime=0", "rtptime", timestamp) && timestamp == 0);
+  assert(!parse_parameter("rtptime=4294967296", "rtptime", timestamp));
+  assert(!parse_parameter("rtptime=-1", "rtptime", timestamp));
+  assert(!parse_parameter("rtptime=123junk", "rtptime", timestamp));
+  assert(flush_samples(1000, FRAME_SAMPLES, 1000) == 0);
+  assert(flush_samples(1001, FRAME_SAMPLES, 1000) == 0);
+  assert(flush_samples(1000, FRAME_SAMPLES, 1100) == 100);
+  assert(flush_samples(1000, FRAME_SAMPLES, 1352) == FRAME_SAMPLES);
+  assert(flush_samples(1000, FRAME_SAMPLES, 2000) == FRAME_SAMPLES);
+  assert(flush_samples(UINT32_MAX - 99, FRAME_SAMPLES, 0) == 100);
+  assert(flush_samples(0, FRAME_SAMPLES, UINT32_MAX - 99) == 0);
+
   // Idle output selection and paused senders are governed by TCP keepalive.
   assert(!udp_session_expired(false, false, 60000, 0, 15000));
   assert(!udp_session_expired(true, true, 60000, 0, 15000));
@@ -130,6 +145,18 @@ int main() {
   assert(!valid_raop_packet(packet.data(), 32, 0));
   packet[1] = 0xd4;
   assert(valid_raop_packet(packet.data(), 20, 1));
+  packet[0] = 0x90;
+  assert(valid_raop_packet(packet.data(), 20, 1));
+  packet[1] = 0x54;
+  assert(valid_raop_packet(packet.data(), 20, 1));
+  assert(!valid_raop_packet(packet.data(), 20, 0));
+  assert(!valid_raop_packet(packet.data(), 20, 2));
+  packet[1] = 0xd3;
+  assert(!valid_raop_packet(packet.data(), 32, 2));
+  packet[1] = 0x60;
+  assert(!valid_raop_packet(packet.data(), 20, 0));
+  packet[0] = 0x80;
+  packet[1] = 0xd4;
   assert(!valid_raop_packet(packet.data(), 19, 1));
   packet[1] = 0x60;
   assert(valid_raop_packet(packet.data(), 13, 0));

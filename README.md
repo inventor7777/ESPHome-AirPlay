@@ -96,7 +96,7 @@ speaker:
 ## Limitations
 - Minimal metadata support. While the component itself supports it, ESPHome's code currently does not allow media sources to provide the media player with it.
 - No password support.
-- No AirPlay 2; proper multiroom syncing is not supported. Your device may allow you to AirPlay to multiple at once, but performance is not guaranteed.
+- No AirPlay 2; proper multiroom syncing is not supported. Your Apple device may allow you to AirPlay to multiple at once, but performance is not guaranteed.
 
 ## Details
 
@@ -106,12 +106,13 @@ speaker:
 - The AirPlay source's `name` sets the advertised receiver name. Its mDNS service instance is `<MAC-without-colons>@<name>._raop._tcp.local`, on port 5000. For the above example, senders would display **Living Room AirPlay**. This name is independent of the native media player's name and ESPHome's device hostname/friendly name.
 - Optional `active` and `client` entities use native ESPHome binary/text sensors. `active` is on while a sender has an established RTSP connection, including idle selection and paused playback. `client` reports that sender’s IPv4 or IPv6 address for the same connection lifetime; it reports `Inactive` when disconnected. Playback state remains independent. Sensor names and other standard entity options are configurable.
 - With `remote_control: true`, Home Assistant next/previous commands use DACP to select tracks on the sender, when the sender supports DACP.
+- Optional `title`, `artist`, and `album` text sensors expose sender-provided track metadata, using the same field names as Sendspin. They retain the track while paused, report `Unknown` for missing fields and `Inactive` after disconnect. Metadata publishes only when changed. Configuring any of these sensors advertises text metadata support (`md=0`); no DACP connection is required. Sender apps may omit metadata. These are separate HA sensors, not media-player title attributes; artwork and progress are not advertised.
 
-- Optional `title`, `artist`, and `album` text sensors expose sender-provided track metadata, using the same field names as Sendspin. They preserve UTF-8 text, retain the track while paused, report `Unknown` for missing fields and `Inactive` after disconnect. Metadata publishes only when changed, from the main loop. Configuring any of these sensors advertises text metadata support (`md=0`); no DACP connection is required. Sender apps may omit metadata. These are separate HA sensors, not media-player title attributes; artwork and progress are not advertised.
 ## Technical Details
 
 - Stop disconnects the sender's session and releases decoder, sockets and PSRAM.
 - Incoming AirPlay RECORD requests select `airplay://current` through the native orchestrator. ESPHome handles stopping the previous source and routing PCM; there is no custom source-switching or mixing code. Other source inputs remain available on the same entity. A single configured pipeline also accepts announcement requests through ESPHome's normal fallback.
+- Repeated RECORD requests resume the existing pipeline. FLUSH honors the sender's RTP timestamp, rejects older packets and trims a packet crossing the boundary. The source automatically binds to its pipeline's speaker and uses its native `stop()` API to clear buffered PCM, waiting for it to stop before writing again. A STOP always cancels the session and immediately revokes sender volume/mute control, including during startup or flushing.
 - Sender volume requests update the native player's volume. AirPlay’s `-144 dB` mute requests use the native mute callback and preserve the previous volume; a later nonzero sender volume request unmutes. The existing slider mapping for non-mute volume remains unchanged. Home Assistant volume and mute use the native speaker, with no second software gain stage.
 - Session connection messages are logged at INFO. Five-second audio progress summaries and first-packet/output messages use DEBUG; RTSP session methods and metadata field-presence summaries use DEBUG.
 - UDP reception/decoding and native speaker writes run in separate tasks, so speaker backpressure does not block packet reception. Playback drains due frames within a bounded prefeed window to absorb task jitter.
@@ -122,4 +123,10 @@ speaker:
 ## Credits, disclaimer and license
 
 Forked from [jptrsn/esphome-raop](https://github.com/jptrsn/esphome-raop). The RAOP implementation derives from Philippe's work and HairTunes; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The project retains [GPL-3.0](LICENSE). Espressif's managed decoder carries its own license.
+
+Credit also goes to these projects:
+
+- [squeezelite-esp32](https://github.com/sle118/squeezelite-esp32) — RTP packet handling and audio buffering.
+- [shairport-sync](https://github.com/mikebrady/shairport-sync) — RTSP protocol and authentication.
+
 Component code and some of this README was written by GPT-6 Sol, but I defined the purpose from the fork up and I tested this *exhaustively* on real hardware before releasing.

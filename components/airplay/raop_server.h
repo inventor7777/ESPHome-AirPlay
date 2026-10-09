@@ -22,12 +22,13 @@ class RaopServer {
  public:
   bool start(AirplayMediaSource *source, const std::string &name, size_t buffer_frames);
   void abort_session() { this->abort_.store(true); }
+  bool is_aborting() const { return this->abort_.load(); }
   void shutdown() { this->running_.store(false); this->abort_session(); }
   bool is_running() const { return this->running_.load(); }
   void set_session_timeout(uint32_t ms) { this->session_timeout_ms_ = ms; }
   void set_remote_control(bool enabled) { this->remote_control_ = enabled; }
   void request_remote_play(bool play) {
-    if (this->remote_running_.load()) this->remote_command_.store(play ? 2 : 1);
+    if (!this->is_aborting() && this->remote_running_.load()) this->remote_command_.store(play ? 2 : 1);
   }
   void request_remote_track(RemoteTrackCommand command);
   uint32_t concealed_packets() const { return this->concealed_frames_.load(); }
@@ -35,7 +36,8 @@ class RaopServer {
   uint32_t output_drops() const { return this->output_drops_.load(); }
   uint32_t decode_errors() const { return this->decode_errors_.load(); }
   bool dacp_available() const {
-    return this->session_active_.load() && this->remote_running_.load() && this->remote_available_.load();
+    return !this->is_aborting() && this->session_active_.load() && this->remote_running_.load() &&
+           this->remote_available_.load();
   }
   bool is_session_active() const { return this->session_active_.load(); }
 
@@ -112,6 +114,8 @@ class RaopServer {
   bool have_sequence_{false};
   bool have_timing_{false};
   bool have_sync_{false};
+  bool have_flush_timestamp_{false};
+  uint32_t flush_timestamp_{0};
   uint16_t read_sequence_{0};
   uint16_t latest_sequence_{0};
   uint32_t sync_rtp_{0};

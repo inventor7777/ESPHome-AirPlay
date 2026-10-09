@@ -20,7 +20,7 @@ static void publish_metadata(text_sensor::TextSensor *sensor, const std::string 
 }
 
 void AirplayMediaSource::setup() {
-  if (!this->has_listener()) {
+  if (!this->has_listener() || !this->speaker_) {
     ESP_LOGE(TAG, "Assign this source to a speaker_source media player");
     this->mark_failed();
   }
@@ -35,19 +35,32 @@ void AirplayMediaSource::loop() {
       ESP_LOGW(TAG, "Receiver startup failed; retrying in five seconds");
   }
   auto generation = this->stream_generation_.load();
-  if (this->session_active_.load()) {
+  if (this->session_active_.load() && !this->server_.is_aborting()) {
     if (generation != this->seen_generation_) {
       this->seen_generation_ = generation;
-      this->pending_start_ = true;
-      this->request_play_uri_("airplay://current");
+      if (this->get_state() == MediaSourceState::IDLE)
+        this->request_play_uri_("airplay://current");
+      else
+        this->set_state_(MediaSourceState::PLAYING);  // RECORD resumes an already-owned pipeline.
     } else if (this->sender_paused_.load()) {
       this->output_enabled_.store(false);
       this->set_state_(MediaSourceState::PAUSED);
     }
   } else {
-    this->pending_start_ = false;
     this->output_enabled_.store(false);
     this->set_state_(MediaSourceState::IDLE);
+  }
+  // Flush only our owned pipeline. STOP/source replacement must never stop the next source's speaker.
+  if (this->flush_requested_.load() || this->output_flushing_.load()) {
+    LockGuard lock(this->output_mutex_);
+    if (this->flush_requested_.exchange(false) && this->get_state() != MediaSourceState::IDLE) {
+      this->output_enabled_.store(false);
+      if (!this->output_flushing_.exchange(true) && !this->speaker_->is_stopped()) this->speaker_->stop();
+    }
+    if (this->output_flushing_.load() && this->speaker_->is_stopped()) {
+      this->output_flushing_.store(false);
+      this->output_enabled_.store(this->get_state() == MediaSourceState::PLAYING && !this->server_.is_aborting());
+    }
   }
   // Publish only from ESPHome's main loop, never the RTSP/audio workers.
   bool active = this->client_connected_.load();
@@ -88,7 +101,8 @@ void AirplayMediaSource::loop() {
     publish_counter(this->output_drops_sensor_, this->server_.output_drops());
     publish_counter(this->decode_errors_sensor_, this->server_.decode_errors());
   }
-  if (this->session_active_.load() && millis() - this->last_volume_update_ >= this->volume_update_interval_ms_) {
+  if (this->session_active_.load() && !this->server_.is_aborting() &&
+      millis() - this->last_volume_update_ >= this->volume_update_interval_ms_) {
     float volume = this->volume_request_.exchange(-1.0f);
     if (volume >= 0.0f || volume == MUTE_REQUEST) {
       this->last_volume_update_ = millis();
@@ -101,37 +115,35 @@ void AirplayMediaSource::loop() {
 }
 
 bool AirplayMediaSource::play_uri(const std::string &uri) {
-  this->pending_start_ = false;
   if (!this->is_ready() || !this->has_listener() || !this->can_handle(uri) ||
-      !this->session_active_.load() || this->get_state() != MediaSourceState::IDLE)
+      !this->session_active_.load() || this->server_.is_aborting() || this->get_state() != MediaSourceState::IDLE)
     return false;
   this->logged_audio_.store(false);
   this->set_state_(MediaSourceState::PLAYING);
-  this->output_enabled_.store(true);
+  this->output_enabled_.store(!this->output_flushing_.load());
   return true;
 }
 
 void AirplayMediaSource::handle_command(MediaSourceCommand command) {
   switch (command) {
     case MediaSourceCommand::STOP:
-      this->output_enabled_.store(false);
-      // The orchestrator may stop this source while delivering our incoming-stream URI.
-      if (!this->pending_start_) this->server_.abort_session();
+      this->server_.abort_session();
+      this->stream_ended();  // Revoke output and sender control before asynchronous worker cleanup.
       this->set_state_(MediaSourceState::IDLE);
       break;
     case MediaSourceCommand::PAUSE:
       this->output_enabled_.store(false);
-      if (this->session_active_.load()) {
+      if (this->session_active_.load() && !this->server_.is_aborting()) {
         this->server_.request_remote_play(false);
         this->set_state_(MediaSourceState::PAUSED);
       }
       break;
     case MediaSourceCommand::PLAY:
-      if (this->session_active_.load()) {
+      if (this->session_active_.load() && !this->server_.is_aborting()) {
         this->server_.request_remote_play(true);
         this->sender_paused_.store(false);
         this->set_state_(MediaSourceState::PLAYING);
-        this->output_enabled_.store(true);
+        this->output_enabled_.store(!this->output_flushing_.load());
       }
       break;
     case MediaSourceCommand::NEXT:
@@ -154,14 +166,23 @@ void AirplayMediaSource::client_connected(const sockaddr_storage &client) {
   this->client_connected_.store(true);
 }
 void AirplayMediaSource::stream_started() {
+  if (this->server_.is_aborting()) return;
   this->sender_paused_.store(false);
   this->session_active_.store(true);
   this->stream_generation_.fetch_add(1);
 }
+void AirplayMediaSource::stream_flushed() {
+  LockGuard lock(this->output_mutex_);
+  this->output_enabled_.store(false);
+  this->flush_requested_.store(true);
+}
 void AirplayMediaSource::stream_ended() {
+  LockGuard lock(this->output_mutex_);
   this->output_enabled_.store(false);
   this->session_active_.store(false);
   this->volume_request_.store(-1.0f);
+  this->flush_requested_.store(false);
+  this->output_flushing_.store(false);
   if (this->metadata_enabled()) this->sender_metadata({"Inactive", "Inactive", "Inactive"});
 }
 void AirplayMediaSource::sender_metadata(TrackMetadata metadata) {
@@ -172,11 +193,14 @@ void AirplayMediaSource::sender_metadata(TrackMetadata metadata) {
   this->metadata_dirty_.store(true);
 }
 void AirplayMediaSource::sender_volume(float volume, bool muted) {
+  if (this->server_.is_aborting()) return;
   // One atomic request keeps rapid mute/volume updates ordered: latest wins.
   this->volume_request_.store(muted ? MUTE_REQUEST : volume);
 }
 
 size_t AirplayMediaSource::write_pcm(const uint8_t *data, size_t length) {
+  LockGuard lock(this->output_mutex_);
+  if (this->flush_requested_.load() || this->output_flushing_.load()) return 0;
   if (!this->output_enabled_.load()) return length;  // Paused/inactive streams advance their live timeline.
   audio::AudioStreamInfo info(16, 2, SAMPLE_RATE);
   size_t written = this->write_output(data, length, 5, info);

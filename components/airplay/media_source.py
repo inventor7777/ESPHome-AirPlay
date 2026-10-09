@@ -2,10 +2,10 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.components import binary_sensor, esp32, media_source, network, sensor, socket, text_sensor
-from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_DIAGNOSTIC, STATE_CLASS_TOTAL_INCREASING
+from esphome.const import CONF_ID, CONF_NAME, CONF_SPEAKER, ENTITY_CATEGORY_DIAGNOSTIC, STATE_CLASS_TOTAL_INCREASING
 from esphome.core import CORE
 
-from . import airplay_ns
+from . import AUTO_LOAD, DEPENDENCIES, airplay_ns
 
 AirplayMediaSource = airplay_ns.class_(
     "AirplayMediaSource", cg.Component, media_source.MediaSource
@@ -101,6 +101,16 @@ def _validate_receiver(config):
         raise cv.Invalid("Only one AirPlay receiver can advertise and listen on port 5000")
     if full.get("mdns", {}).get("disabled", False):
         raise cv.Invalid("AirPlay requires mDNS discovery")
+    speakers = [
+        player[pipeline][CONF_SPEAKER]
+        for player in full.get("media_player", [])
+        if player["platform"] == "speaker_source"
+        for pipeline in ("media_pipeline", "announcement_pipeline")
+        if pipeline in player and config[CONF_ID] in player[pipeline]["sources"]
+    ]
+    if len(speakers) != 1:
+        raise cv.Invalid("Assign the AirPlay source to exactly one speaker_source pipeline")
+    config[CONF_SPEAKER] = speakers[0]
     return config
 
 
@@ -111,6 +121,7 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await media_source.register_media_source(var, config)
+    cg.add(var.set_speaker(await cg.get_variable(config[CONF_SPEAKER])))
     cg.add(var.set_name(config[CONF_NAME]))
     cg.add(var.set_buffer_frames(config["buffer_frames"]))
     cg.add(var.set_prefeed_duration(config["prefeed_duration"].total_milliseconds))

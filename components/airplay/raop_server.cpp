@@ -407,6 +407,7 @@ bool RaopServer::setup_audio_(const std::string &transport) {
     this->ports_[i] = address_port(address);
   }
   this->recording_ = this->have_sequence_ = this->have_timing_ = this->have_sync_ = false;
+  this->have_flush_timestamp_ = false;
   this->received_packets_.fill(0);
   this->decoded_frames_ = 0;
   this->decode_errors_.store(0);
@@ -495,6 +496,7 @@ void RaopServer::reset_audio_(const std::string &rtp_info) {
   esp_alac_dec_reset(this->decoder_);
   this->audio_generation_.fetch_add(1);
   for (size_t i = 0; i < this->buffer_frames_; ++i) this->frames_[i].ready = false;
+  this->have_flush_timestamp_ = parse_parameter(rtp_info, "rtptime", this->flush_timestamp_);
   this->have_sequence_ = false;
   uint16_t sequence;
   if (parse_parameter(rtp_info, "seq", sequence)) {
@@ -502,6 +504,7 @@ void RaopServer::reset_audio_(const std::string &rtp_info) {
     this->latest_sequence_ = uint16_t(sequence - 1);
     this->have_sequence_ = true;
   }
+  this->source_->stream_flushed();
   xSemaphoreGive(this->audio_mutex_);
 }
 
@@ -625,7 +628,7 @@ bool RaopServer::send_remote_command_(uint16_t port, const char *command) {
     }
   }
   unsigned status = 0;
-  if (connected && this->remote_running_.load()) {
+  if (connected && !this->is_aborting() && this->remote_running_.load()) {
     std::string request = std::string("GET /ctrl-int/1/") + command + " HTTP/1.0\r\nHost: " +
         http_host(target) + "\r\nActive-Remote: " +
         this->active_remote_ + "\r\nConnection: close\r\n\r\n";
@@ -642,7 +645,7 @@ bool RaopServer::send_remote_command_(uint16_t port, const char *command) {
 }
 
 void RaopServer::request_remote_track(RemoteTrackCommand command) {
-  if (!this->remote_running_.load() || !this->session_active_.load()) return;
+  if (this->is_aborting() || !this->remote_running_.load() || !this->session_active_.load()) return;
   if (xQueueSend(this->remote_tracks_, &command, 0) != pdTRUE)
     ESP_LOGW(TAG, "DACP track queue full; skip rejected");
 }
@@ -746,7 +749,8 @@ bool RaopServer::receive_packet_(size_t index) {
   data += 12;
   received -= 12;
   xSemaphoreTake(this->audio_mutex_, portMAX_DELAY);
-  if (!this->recording_) {
+  if (!this->recording_ || (this->have_flush_timestamp_ &&
+      flush_samples(timestamp, FRAME_SAMPLES, this->flush_timestamp_) == FRAME_SAMPLES)) {
     xSemaphoreGive(this->audio_mutex_);
     return true;
   }
@@ -838,6 +842,18 @@ bool RaopServer::play_frame_() {
       return false;
     }
   }
+  if (this->have_flush_timestamp_) {
+    size_t skipped = flush_samples(frame.timestamp, frame.length / 4, this->flush_timestamp_);
+    frame.length -= skipped * 4;
+    frame.timestamp += skipped;
+    std::memmove(frame.pcm.data(), frame.pcm.data() + skipped * 4, frame.length);
+    if (!frame.length) {
+      head.ready = false;
+      this->read_sequence_++;
+      xSemaphoreGive(this->audio_mutex_);
+      return true;
+    }
+  }
   int32_t wait = playback_wait_ms(frame.timestamp, this->sync_rtp_, this->sync_ms_, millis(),
                                  this->source_->output_delay_ms());
   if (wait > 5) {
@@ -850,6 +866,7 @@ bool RaopServer::play_frame_() {
   }
   head.ready = false;
   this->read_sequence_++;
+  if (frame.ready) this->have_flush_timestamp_ = false;  // Late retransmits now fail the sequence check.
   xSemaphoreGive(this->audio_mutex_);
   // ponytail: millisecond scheduling; sample-level clock discipline is needed for tighter group sync.
   if (wait < -100) {
@@ -865,6 +882,7 @@ bool RaopServer::play_frame_() {
     size_t written = this->source_->write_pcm(frame.pcm.data() + offset, frame.length - offset);
     this->written_bytes_ += written;
     offset += written;
+    if (!written) vTaskDelay(pdMS_TO_TICKS(1));
   }
   // Count backpressure loss, excluding cancellation during FLUSH or disconnect.
   if (offset < frame.length && this->audio_running_.load() && !this->abort_.load() &&
