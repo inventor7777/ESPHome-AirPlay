@@ -48,7 +48,7 @@ media_source:
     dacp_available:
       name: "AirPlay DACP Available"
     buffer_frames: 512
-    udp_receive_buffer_packets: 32
+    udp_receive_buffer_packets: 64
     prefeed_duration: 100ms
     output_latency: 20ms
     volume_update_interval: 100ms
