@@ -48,7 +48,7 @@ media_source:
     dacp_available:
       name: "AirPlay DACP Available"
     buffer_frames: 512
-    udp_receive_buffer_packets: 64
+    udp_receive_buffer_packets: 50
     prefeed_duration: 100ms
     output_latency: 20ms
     volume_update_interval: 100ms
@@ -87,7 +87,7 @@ speaker:
 ## Tuning
 
 - `buffer_frames` accepts 512, 1024 or 2048. Larger values use more PSRAM but provide more buffering against network or scheduling jitter. The default 512-frame buffer uses about 710 KiB of PSRAM per session.
-- `udp_receive_buffer_packets` accepts 6–64, default 32 (about 250 ms of audio). It controls ESP-IDF's per-socket UDP mailbox, independently of the decoded PCM buffer. This is a firmware-wide setting affecting all UDP sockets; larger queues can retain more packet memory during bursts. Changing it requires rebuilding firmware. The ESP-IDF default of six packets proved too small for my ESP32-S3.
+- `udp_receive_buffer_packets` accepts 6–64, default 50 (about 400 ms of audio). It controls ESP-IDF's per-socket UDP mailbox, independently of the decoded PCM buffer. This is a firmware-wide setting affecting all UDP sockets; larger queues can retain more packet memory during bursts. Changing it requires rebuilding firmware. The ESP-IDF default of six packets proved too small for my ESP32-S3.
 - `prefeed_duration` accepts 0–500 ms, default 100 ms. It controls how early PCM is offered to the native speaker. Larger values trade timing accuracy for jitter headroom; keep the total of this value and `output_latency` below the native speaker's `buffer_duration` to avoid routinely blocking on a full speaker buffer. The speaker's own buffer remains configured on the native `speaker`, not the AirPlay source.
 - `volume_update_interval` accepts 10 ms–1 s, default 100 ms. It sets the minimum interval between native updates from sender volume requests; the most recent pending value wins, and unchanged values are ignored. It does not throttle volume changes made directly in Home Assistant.
 - `session_timeout` accepts 5 s–5 min, default 15 s. A session is disconnected after this long without UDP traffic after the first audio frame has decoded. Live RTSP selections can stay idle before setup; native TCP keepalive detects vanished senders. Timing/control packets count as UDP activity. It is an inactivity timeout, not a maximum playback duration.

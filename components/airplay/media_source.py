@@ -65,7 +65,7 @@ CONFIG_SCHEMA = cv.All(
                 state_class=STATE_CLASS_TOTAL_INCREASING,
             ),
             cv.Optional("buffer_frames", default=512): cv.one_of(512, 1024, 2048, int=True),
-            cv.Optional("udp_receive_buffer_packets", default=32): cv.int_range(min=6, max=64),
+            cv.Optional("udp_receive_buffer_packets", default=50): cv.int_range(min=6, max=64),
             cv.Optional("prefeed_duration", default="100ms"): cv.All(
                 cv.positive_time_period_milliseconds,
                 cv.Range(max=cv.TimePeriod(milliseconds=500)),
